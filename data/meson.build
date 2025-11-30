@@ -12,6 +12,6 @@ install_data(
 
 # Install icons
 install_data(
-  'icons/hicolor/256x256/apps/media.madari.app.png',
-  install_dir: get_option('datadir') / 'icons/hicolor/256x256/apps'
+  'icons/hicolor/512x512/apps/media.madari.app.png',
+  install_dir: get_option('datadir') / 'icons/hicolor/512x512/apps'
 )

@@ -398,13 +398,11 @@ jobs:
       
       - name: Setup icon
         run: |
-          # Icon is already installed by meson install to AppDir
-          # Create symlink for AppImage compatibility
-          mkdir -p AppDir/usr/share/icons/hicolor/256x256/apps
-          if [ ! -f AppDir/usr/share/icons/hicolor/256x256/apps/${{ env.APP_ID }}.png ]; then
-            # Icon should be there from meson install, but download as fallback
-            curl -L -o AppDir/usr/share/icons/hicolor/256x256/apps/${{ env.APP_ID }}.png \
-              "https://raw.githubusercontent.com/madari-media/madari-oss/refs/heads/main/assets/icon/icon.png"
+          # Icon is installed by meson to AppDir, verify it exists
+          mkdir -p AppDir/usr/share/icons/hicolor/512x512/apps
+          if [ ! -f AppDir/usr/share/icons/hicolor/512x512/apps/${{ env.APP_ID }}.png ]; then
+            echo "Icon not found, this shouldn't happen"
+            exit 1
           fi
       
       - name: Download AppImage tools
@@ -424,7 +422,7 @@ jobs:
             --appdir AppDir \
             --executable AppDir/usr/bin/${{ env.APP_NAME }} \
             --desktop-file AppDir/usr/share/applications/${{ env.APP_ID }}.desktop \
-            --icon-file AppDir/usr/share/icons/hicolor/256x256/apps/${{ env.APP_ID }}.png \
+            --icon-file AppDir/usr/share/icons/hicolor/512x512/apps/${{ env.APP_ID }}.png \
             --output appimage
           
           # Verify AppImage was created
