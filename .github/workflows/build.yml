@@ -72,13 +72,15 @@ jobs:
       
       - name: Create spec file
         run: |
-          cat > ~/rpmbuild/SPECS/${{ env.APP_NAME }}.spec << 'EOF'
+          VERSION="${{ needs.setup.outputs.version }}"
+          cat > ~/rpmbuild/SPECS/${{ env.APP_NAME }}.spec << EOF
           Name:           ${{ env.APP_NAME }}
-          Version:        ${{ needs.setup.outputs.version }}
+          Version:        ${VERSION}
           Release:        1%{?dist}
           Summary:        Madari - A GTK4 Media Application
           License:        GPL-3.0
           URL:            https://github.com/${{ github.repository }}
+          Source0:        %{name}-%{version}.tar.gz
           
           BuildRequires:  meson >= 1.0.0
           BuildRequires:  ninja-build
