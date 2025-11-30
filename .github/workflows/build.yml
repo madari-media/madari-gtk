@@ -121,6 +121,8 @@ jobs:
       - name: Create source tarball
         run: |
           mkdir -p ~/rpmbuild/SOURCES
+          # Reset file timestamps to avoid clock skew issues
+          find . -type f -exec touch {} +
           tar --transform "s,^,${{ env.APP_NAME }}-${{ needs.setup.outputs.version }}/," \
               -czf ~/rpmbuild/SOURCES/${{ env.APP_NAME }}-${{ needs.setup.outputs.version }}.tar.gz \
               --exclude='.git' --exclude='builddir' .
@@ -405,58 +407,34 @@ jobs:
               "https://raw.githubusercontent.com/madari-media/madari-oss/refs/heads/main/assets/icon/icon.png"
           fi
       
-      - name: Download linuxdeploy
+      - name: Download AppImage tools
         run: |
+          # Download linuxdeploy and its AppImage plugin
           wget -q https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage
-          chmod +x linuxdeploy-x86_64.AppImage
-      
-      - name: Create AppRun
-        run: |
-          cat > AppDir/AppRun << 'EOF'
-          #!/bin/bash
-          SELF=$(readlink -f "$0")
-          HERE=${SELF%/*}
-          export PATH="${HERE}/usr/bin:${PATH}"
-          export LD_LIBRARY_PATH="${HERE}/usr/lib:${HERE}/usr/lib/x86_64-linux-gnu:${LD_LIBRARY_PATH}"
-          export XDG_DATA_DIRS="${HERE}/usr/share:${XDG_DATA_DIRS}"
-          export GDK_PIXBUF_MODULE_FILE="${HERE}/usr/lib/x86_64-linux-gnu/gdk-pixbuf-2.0/2.10.0/loaders.cache"
-          export GST_PLUGIN_PATH="${HERE}/usr/lib/x86_64-linux-gnu/gstreamer-1.0"
-          exec "${HERE}/usr/bin/${{ env.APP_NAME }}" "$@"
-          EOF
-          chmod +x AppDir/AppRun
+          wget -q https://github.com/linuxdeploy/linuxdeploy-plugin-appimage/releases/download/continuous/linuxdeploy-plugin-appimage-x86_64.AppImage
+          chmod +x linuxdeploy-x86_64.AppImage linuxdeploy-plugin-appimage-x86_64.AppImage
       
       - name: Bundle AppImage
         run: |
-          # Copy necessary libraries
-          mkdir -p AppDir/usr/lib
+          # Set output filename
+          export OUTPUT="${{ env.APP_NAME }}-${{ needs.setup.outputs.version }}-x86_64.AppImage"
           
-          # Use linuxdeploy to bundle
+          # Use linuxdeploy to bundle dependencies and create AppImage
           ./linuxdeploy-x86_64.AppImage \
             --appdir AppDir \
+            --executable AppDir/usr/bin/${{ env.APP_NAME }} \
             --desktop-file AppDir/usr/share/applications/${{ env.APP_ID }}.desktop \
             --icon-file AppDir/usr/share/icons/hicolor/256x256/apps/${{ env.APP_ID }}.png \
-            --output appimage || true
+            --output appimage
           
-          # If linuxdeploy fails, create a basic AppImage manually
-          if [ ! -f *.AppImage ]; then
-            wget -q https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage
-            chmod +x appimagetool-x86_64.AppImage
-            ./appimagetool-x86_64.AppImage AppDir ${{ env.APP_NAME }}-${{ needs.setup.outputs.version }}-x86_64.AppImage
-          fi
-      
-      - name: Rename AppImage
-        run: |
-          for f in *.AppImage; do
-            if [[ "$f" != *"${{ needs.setup.outputs.version }}"* ]]; then
-              mv "$f" "${{ env.APP_NAME }}-${{ needs.setup.outputs.version }}-x86_64.AppImage" 2>/dev/null || true
-            fi
-          done
+          # Verify AppImage was created
+          ls -la *.AppImage
       
       - name: Upload AppImage artifact
         uses: actions/upload-artifact@v4
         with:
           name: appimage-package
-          path: "*.AppImage"
+          path: "${{ env.APP_NAME }}-*.AppImage"
 
   # Create Release (only on tags)
   release:
