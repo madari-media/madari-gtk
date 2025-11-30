@@ -324,7 +324,7 @@ jobs:
   # Build AppImage
   build-appimage:
     needs: setup
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       
@@ -343,6 +343,7 @@ jobs:
             libepoxy-dev \
             libegl1-mesa-dev \
             libfuse2 \
+            libfuse3-dev \
             file \
             desktop-file-utils \
             appstream
