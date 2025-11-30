@@ -1,0 +1,536 @@
+name: Build Packages
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - 'v*'
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+env:
+  APP_ID: media.madari.app
+  APP_NAME: madari
+
+jobs:
+  # Determine build type
+  setup:
+    runs-on: ubuntu-latest
+    outputs:
+      is_release: ${{ steps.check.outputs.is_release }}
+      version: ${{ steps.check.outputs.version }}
+      build_type: ${{ steps.check.outputs.build_type }}
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Determine build type
+        id: check
+        run: |
+          if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+            VERSION="${GITHUB_REF#refs/tags/v}"
+            echo "is_release=true" >> $GITHUB_OUTPUT
+            echo "version=$VERSION" >> $GITHUB_OUTPUT
+            echo "build_type=release" >> $GITHUB_OUTPUT
+          else
+            VERSION="0.1.0-dev.$(date +%Y%m%d).${GITHUB_SHA::7}"
+            echo "is_release=false" >> $GITHUB_OUTPUT
+            echo "version=$VERSION" >> $GITHUB_OUTPUT
+            echo "build_type=dev" >> $GITHUB_OUTPUT
+          fi
+
+  # Build Fedora RPM
+  build-rpm:
+    needs: setup
+    runs-on: ubuntu-latest
+    container:
+      image: fedora:40
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Install dependencies
+        run: |
+          dnf install -y \
+            meson \
+            ninja-build \
+            gcc-c++ \
+            gtk4-devel \
+            libadwaita-devel \
+            json-glib-devel \
+            libsoup3-devel \
+            mpv-libs-devel \
+            libepoxy-devel \
+            mesa-libEGL-devel \
+            rpm-build \
+            rpmdevtools
+      
+      - name: Setup RPM build environment
+        run: rpmdev-setuptree
+      
+      - name: Create spec file
+        run: |
+          cat > ~/rpmbuild/SPECS/${{ env.APP_NAME }}.spec << 'EOF'
+          Name:           ${{ env.APP_NAME }}
+          Version:        ${{ needs.setup.outputs.version }}
+          Release:        1%{?dist}
+          Summary:        Madari - A GTK4 Media Application
+          License:        GPL-3.0
+          URL:            https://github.com/${{ github.repository }}
+          
+          BuildRequires:  meson >= 1.0.0
+          BuildRequires:  ninja-build
+          BuildRequires:  gcc-c++
+          BuildRequires:  gtk4-devel >= 4.10
+          BuildRequires:  libadwaita-devel >= 1.4
+          BuildRequires:  json-glib-devel
+          BuildRequires:  libsoup3-devel
+          BuildRequires:  mpv-libs-devel
+          BuildRequires:  libepoxy-devel
+          BuildRequires:  mesa-libEGL-devel
+          
+          Requires:       gtk4 >= 4.10
+          Requires:       libadwaita >= 1.4
+          Requires:       json-glib
+          Requires:       libsoup3
+          Requires:       mpv-libs
+          Requires:       libepoxy
+          
+          %description
+          Madari is a GTK4/libadwaita media application with Stremio integration.
+          
+          %prep
+          %setup -q
+          
+          %build
+          %meson
+          %meson_build
+          
+          %install
+          %meson_install
+          
+          %files
+          %license COPYING
+          %{_bindir}/${{ env.APP_NAME }}
+          EOF
+      
+      - name: Create source tarball
+        run: |
+          mkdir -p ~/rpmbuild/SOURCES
+          tar --transform "s,^,${{ env.APP_NAME }}-${{ needs.setup.outputs.version }}/," \
+              -czf ~/rpmbuild/SOURCES/${{ env.APP_NAME }}-${{ needs.setup.outputs.version }}.tar.gz \
+              --exclude='.git' --exclude='builddir' .
+      
+      - name: Build RPM
+        run: |
+          rpmbuild -ba ~/rpmbuild/SPECS/${{ env.APP_NAME }}.spec
+      
+      - name: Copy RPM artifacts
+        run: |
+          mkdir -p artifacts
+          cp ~/rpmbuild/RPMS/*/*.rpm artifacts/
+      
+      - name: Upload RPM artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: rpm-package
+          path: artifacts/*.rpm
+
+  # Build Debian/Ubuntu DEB
+  build-deb:
+    needs: setup
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            meson \
+            ninja-build \
+            g++ \
+            libgtk-4-dev \
+            libadwaita-1-dev \
+            libjson-glib-dev \
+            libsoup-3.0-dev \
+            libmpv-dev \
+            libepoxy-dev \
+            libegl1-mesa-dev \
+            debhelper \
+            devscripts \
+            dh-make \
+            fakeroot
+      
+      - name: Create debian directory
+        run: |
+          mkdir -p debian
+          
+          # debian/control
+          cat > debian/control << EOF
+          Source: ${{ env.APP_NAME }}
+          Section: video
+          Priority: optional
+          Maintainer: Madari Developers <madari@example.com>
+          Build-Depends: debhelper (>= 13),
+                         meson (>= 1.0.0),
+                         ninja-build,
+                         g++,
+                         libgtk-4-dev (>= 4.10),
+                         libadwaita-1-dev (>= 1.4),
+                         libjson-glib-dev,
+                         libsoup-3.0-dev,
+                         libmpv-dev,
+                         libepoxy-dev,
+                         libegl1-mesa-dev
+          Standards-Version: 4.6.0
+          Homepage: https://github.com/${{ github.repository }}
+          
+          Package: ${{ env.APP_NAME }}
+          Architecture: any
+          Depends: \${shlibs:Depends}, \${misc:Depends}
+          Description: Madari - A GTK4 Media Application
+           Madari is a GTK4/libadwaita media application with Stremio integration
+           and Trakt support.
+          EOF
+          
+          # debian/changelog
+          cat > debian/changelog << EOF
+          ${{ env.APP_NAME }} (${{ needs.setup.outputs.version }}-1) unstable; urgency=medium
+          
+            * Build from ${{ github.sha }}
+          
+           -- Madari Developers <madari@example.com>  $(date -R)
+          EOF
+          
+          # debian/rules
+          cat > debian/rules << 'EOF'
+          #!/usr/bin/make -f
+          %:
+          	dh $@ --buildsystem=meson
+          EOF
+          chmod +x debian/rules
+          
+          # debian/compat
+          echo "13" > debian/compat
+          
+          # debian/source/format
+          mkdir -p debian/source
+          echo "3.0 (native)" > debian/source/format
+          
+          # debian/copyright
+          cat > debian/copyright << EOF
+          Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
+          Upstream-Name: ${{ env.APP_NAME }}
+          Source: https://github.com/${{ github.repository }}
+          
+          Files: *
+          Copyright: $(date +%Y) Madari Developers
+          License: GPL-3.0
+          EOF
+      
+      - name: Build DEB package
+        run: |
+          dpkg-buildpackage -us -uc -b
+      
+      - name: Copy DEB artifacts
+        run: |
+          mkdir -p artifacts
+          cp ../*.deb artifacts/
+      
+      - name: Upload DEB artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: deb-package
+          path: artifacts/*.deb
+
+  # Build Arch Linux Package
+  build-arch:
+    needs: setup
+    runs-on: ubuntu-latest
+    container:
+      image: archlinux:latest
+    steps:
+      - name: Setup pacman and install base packages
+        run: |
+          pacman -Syu --noconfirm
+          pacman -S --noconfirm \
+            base-devel \
+            git \
+            meson \
+            ninja \
+            gtk4 \
+            libadwaita \
+            json-glib \
+            libsoup3 \
+            mpv \
+            libepoxy \
+            sudo
+      
+      - uses: actions/checkout@v4
+      
+      - name: Create build user
+        run: |
+          useradd -m builder
+          echo "builder ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers
+          chown -R builder:builder .
+      
+      - name: Create PKGBUILD
+        run: |
+          cat > PKGBUILD << 'EOF'
+          # Maintainer: Madari Developers <madari@example.com>
+          pkgname=${{ env.APP_NAME }}
+          pkgver=${{ needs.setup.outputs.version }}
+          pkgrel=1
+          pkgdesc="Madari - A GTK4 Media Application with Stremio integration"
+          arch=('x86_64')
+          url="https://github.com/${{ github.repository }}"
+          license=('GPL3')
+          depends=('gtk4' 'libadwaita' 'json-glib' 'libsoup3' 'mpv' 'libepoxy')
+          makedepends=('meson' 'ninja')
+          source=()
+          
+          build() {
+            cd "$startdir"
+            meson setup build --prefix=/usr --buildtype=release
+            meson compile -C build
+          }
+          
+          package() {
+            cd "$startdir"
+            DESTDIR="$pkgdir" meson install -C build
+          }
+          EOF
+          # Fix version format for Arch (replace - with _)
+          sed -i "s/pkgver=.*/pkgver=$(echo '${{ needs.setup.outputs.version }}' | tr '-' '_')/" PKGBUILD
+          chown builder:builder PKGBUILD
+      
+      - name: Build Arch package
+        run: |
+          su builder -c "makepkg -sf --noconfirm"
+      
+      - name: Copy Arch artifacts
+        run: |
+          mkdir -p artifacts
+          cp *.pkg.tar.zst artifacts/ 2>/dev/null || cp *.pkg.tar.xz artifacts/ 2>/dev/null || true
+      
+      - name: Upload Arch artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: arch-package
+          path: artifacts/*.pkg.tar.*
+
+  # Build AppImage
+  build-appimage:
+    needs: setup
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            meson \
+            ninja-build \
+            g++ \
+            libgtk-4-dev \
+            libadwaita-1-dev \
+            libjson-glib-dev \
+            libsoup-3.0-dev \
+            libmpv-dev \
+            libepoxy-dev \
+            libegl1-mesa-dev \
+            libfuse2 \
+            file \
+            desktop-file-utils \
+            appstream
+      
+      - name: Build application
+        run: |
+          meson setup build --prefix=/usr --buildtype=release
+          meson compile -C build
+          DESTDIR=$(pwd)/AppDir meson install -C build
+      
+      - name: Create desktop file
+        run: |
+          mkdir -p AppDir/usr/share/applications
+          cat > AppDir/usr/share/applications/${{ env.APP_ID }}.desktop << EOF
+          [Desktop Entry]
+          Name=Madari
+          Comment=A GTK4 Media Application
+          Exec=${{ env.APP_NAME }}
+          Icon=${{ env.APP_ID }}
+          Terminal=false
+          Type=Application
+          Categories=AudioVideo;Video;Player;
+          EOF
+      
+      - name: Create AppStream metadata
+        run: |
+          mkdir -p AppDir/usr/share/metainfo
+          cat > AppDir/usr/share/metainfo/${{ env.APP_ID }}.appdata.xml << EOF
+          <?xml version="1.0" encoding="UTF-8"?>
+          <component type="desktop-application">
+            <id>${{ env.APP_ID }}</id>
+            <name>Madari</name>
+            <summary>A GTK4 Media Application</summary>
+            <metadata_license>CC0-1.0</metadata_license>
+            <project_license>GPL-3.0</project_license>
+            <description>
+              <p>Madari is a GTK4/libadwaita media application with Stremio integration and Trakt support.</p>
+            </description>
+            <launchable type="desktop-id">${{ env.APP_ID }}.desktop</launchable>
+            <url type="homepage">https://github.com/${{ github.repository }}</url>
+            <provides>
+              <binary>${{ env.APP_NAME }}</binary>
+            </provides>
+          </component>
+          EOF
+      
+      - name: Setup icon
+        run: |
+          # Icon is already installed by meson install to AppDir
+          # Create symlink for AppImage compatibility
+          mkdir -p AppDir/usr/share/icons/hicolor/256x256/apps
+          if [ ! -f AppDir/usr/share/icons/hicolor/256x256/apps/${{ env.APP_ID }}.png ]; then
+            # Icon should be there from meson install, but download as fallback
+            curl -L -o AppDir/usr/share/icons/hicolor/256x256/apps/${{ env.APP_ID }}.png \
+              "https://raw.githubusercontent.com/madari-media/madari-oss/refs/heads/main/assets/icon/icon.png"
+          fi
+      
+      - name: Download linuxdeploy
+        run: |
+          wget -q https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage
+          chmod +x linuxdeploy-x86_64.AppImage
+      
+      - name: Create AppRun
+        run: |
+          cat > AppDir/AppRun << 'EOF'
+          #!/bin/bash
+          SELF=$(readlink -f "$0")
+          HERE=${SELF%/*}
+          export PATH="${HERE}/usr/bin:${PATH}"
+          export LD_LIBRARY_PATH="${HERE}/usr/lib:${HERE}/usr/lib/x86_64-linux-gnu:${LD_LIBRARY_PATH}"
+          export XDG_DATA_DIRS="${HERE}/usr/share:${XDG_DATA_DIRS}"
+          export GDK_PIXBUF_MODULE_FILE="${HERE}/usr/lib/x86_64-linux-gnu/gdk-pixbuf-2.0/2.10.0/loaders.cache"
+          export GST_PLUGIN_PATH="${HERE}/usr/lib/x86_64-linux-gnu/gstreamer-1.0"
+          exec "${HERE}/usr/bin/${{ env.APP_NAME }}" "$@"
+          EOF
+          chmod +x AppDir/AppRun
+      
+      - name: Bundle AppImage
+        run: |
+          # Copy necessary libraries
+          mkdir -p AppDir/usr/lib
+          
+          # Use linuxdeploy to bundle
+          ./linuxdeploy-x86_64.AppImage \
+            --appdir AppDir \
+            --desktop-file AppDir/usr/share/applications/${{ env.APP_ID }}.desktop \
+            --icon-file AppDir/usr/share/icons/hicolor/256x256/apps/${{ env.APP_ID }}.png \
+            --output appimage || true
+          
+          # If linuxdeploy fails, create a basic AppImage manually
+          if [ ! -f *.AppImage ]; then
+            wget -q https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage
+            chmod +x appimagetool-x86_64.AppImage
+            ./appimagetool-x86_64.AppImage AppDir ${{ env.APP_NAME }}-${{ needs.setup.outputs.version }}-x86_64.AppImage
+          fi
+      
+      - name: Rename AppImage
+        run: |
+          for f in *.AppImage; do
+            if [[ "$f" != *"${{ needs.setup.outputs.version }}"* ]]; then
+              mv "$f" "${{ env.APP_NAME }}-${{ needs.setup.outputs.version }}-x86_64.AppImage" 2>/dev/null || true
+            fi
+          done
+      
+      - name: Upload AppImage artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: appimage-package
+          path: "*.AppImage"
+
+  # Create Release (only on tags)
+  release:
+    needs: [setup, build-rpm, build-deb, build-arch, build-appimage]
+    if: needs.setup.outputs.is_release == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+      
+      - name: Display structure of downloaded files
+        run: ls -laR artifacts/
+      
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          name: Release v${{ needs.setup.outputs.version }}
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+          files: |
+            artifacts/**/*.rpm
+            artifacts/**/*.deb
+            artifacts/**/*.pkg.tar.*
+            artifacts/**/*.AppImage
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # Upload dev builds (on main branch)
+  dev-release:
+    needs: [setup, build-rpm, build-deb, build-arch, build-appimage]
+    if: needs.setup.outputs.is_release == 'false' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+      
+      - name: Display structure of downloaded files
+        run: ls -laR artifacts/
+      
+      - name: Delete existing dev release
+        run: |
+          gh release delete dev --yes || true
+          git push origin :refs/tags/dev || true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      
+      - name: Create Dev Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: dev
+          name: Development Build
+          draft: false
+          prerelease: true
+          body: |
+            ## Development Build
+            
+            **Version:** ${{ needs.setup.outputs.version }}
+            **Commit:** ${{ github.sha }}
+            **Date:** ${{ github.event.head_commit.timestamp }}
+            
+            ⚠️ This is an automated development build from the main branch.
+            It may be unstable and is not recommended for production use.
+          files: |
+            artifacts/**/*.rpm
+            artifacts/**/*.deb
+            artifacts/**/*.pkg.tar.*
+            artifacts/**/*.AppImage
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

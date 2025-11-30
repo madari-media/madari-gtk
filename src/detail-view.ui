@@ -1,0 +1,342 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<interface>
+  <requires lib="gtk" version="4.0"/>
+  <requires lib="libadwaita" version="1.0"/>
+  <template class="MadariDetailView" parent="AdwNavigationPage">
+    <property name="title">Details</property>
+    <property name="child">
+      <object class="AdwToolbarView">
+        <child type="top">
+          <object class="AdwHeaderBar"/>
+        </child>
+        <property name="content">
+          <object class="GtkStack" id="main_stack">
+            <property name="transition-type">crossfade</property>
+            <property name="vexpand">true</property>
+            
+            <!-- Loading State -->
+            <child>
+              <object class="GtkStackPage">
+                <property name="name">loading</property>
+                <property name="child">
+                  <object class="GtkBox">
+                    <property name="orientation">vertical</property>
+                    <property name="valign">center</property>
+                    <property name="halign">center</property>
+                    <property name="vexpand">true</property>
+                    <property name="spacing">12</property>
+                    <child>
+                      <object class="GtkSpinner" id="loading_spinner">
+                        <property name="spinning">true</property>
+                        <property name="width-request">32</property>
+                        <property name="height-request">32</property>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="GtkLabel">
+                        <property name="label" translatable="yes">Loading...</property>
+                        <style>
+                          <class name="dim-label"/>
+                        </style>
+                      </object>
+                    </child>
+                  </object>
+                </property>
+              </object>
+            </child>
+            
+            <!-- Error State -->
+            <child>
+              <object class="GtkStackPage">
+                <property name="name">error</property>
+                <property name="child">
+                  <object class="AdwStatusPage">
+                    <property name="icon-name">dialog-error-symbolic</property>
+                    <property name="title" translatable="yes">Failed to Load</property>
+                    <property name="description" translatable="yes">Could not load content details</property>
+                  </object>
+                </property>
+              </object>
+            </child>
+            
+            <!-- Content State -->
+            <child>
+              <object class="GtkStackPage">
+                <property name="name">content</property>
+                <property name="child">
+                  <object class="GtkScrolledWindow">
+                    <property name="hscrollbar-policy">never</property>
+                    <property name="vscrollbar-policy">automatic</property>
+                    <property name="vexpand">true</property>
+                    <child>
+                      <object class="GtkBox" id="content_box">
+                        <property name="orientation">vertical</property>
+                        <property name="spacing">0</property>
+                        
+                        <!-- Background Hero Section -->
+                        <child>
+                          <object class="GtkOverlay">
+                            <property name="height-request">350</property>
+                            <!-- Background container with fixed size -->
+                            <child>
+                              <object class="GtkBox">
+                                <property name="orientation">vertical</property>
+                                <property name="height-request">350</property>
+                                <property name="vexpand">false</property>
+                                <style>
+                                  <class name="background"/>
+                                </style>
+                                <!-- Background picture fills this box -->
+                                <child>
+                                  <object class="GtkPicture" id="background_picture">
+                                    <property name="content-fit">cover</property>
+                                    <property name="height-request">350</property>
+                                    <property name="hexpand">true</property>
+                                    <property name="vexpand">true</property>
+                                    <property name="opacity">0.3</property>
+                                  </object>
+                                </child>
+                              </object>
+                            </child>
+                            
+                            <!-- Content overlay on background -->
+                            <child type="overlay">
+                              <object class="GtkBox">
+                                <property name="orientation">horizontal</property>
+                                <property name="spacing">32</property>
+                                <property name="margin-start">32</property>
+                                <property name="margin-end">32</property>
+                                <property name="margin-top">32</property>
+                                <property name="margin-bottom">32</property>
+                                <property name="valign">end</property>
+                                
+                                <!-- Poster -->
+                                <child>
+                                  <object class="GtkFrame">
+                                    <property name="halign">start</property>
+                                    <property name="valign">end</property>
+                                    <style>
+                                      <class name="card"/>
+                                    </style>
+                                    <child>
+                                      <object class="GtkPicture" id="poster">
+                                        <property name="width-request">180</property>
+                                        <property name="height-request">270</property>
+                                        <property name="content-fit">cover</property>
+                                      </object>
+                                    </child>
+                                  </object>
+                                </child>
+                                
+                                <!-- Title and info -->
+                                <child>
+                                  <object class="GtkBox">
+                                    <property name="orientation">vertical</property>
+                                    <property name="spacing">8</property>
+                                    <property name="valign">end</property>
+                                    <property name="hexpand">true</property>
+                                    
+                                    <!-- Title -->
+                                    <child>
+                                      <object class="GtkLabel" id="title_label">
+                                        <property name="label">Title</property>
+                                        <property name="halign">start</property>
+                                        <property name="wrap">true</property>
+                                        <property name="wrap-mode">word-char</property>
+                                        <property name="max-width-chars">50</property>
+                                        <style>
+                                          <class name="title-1"/>
+                                        </style>
+                                      </object>
+                                    </child>
+                                    
+                                    <!-- Info chips (year, rating, runtime, genres) -->
+                                    <child>
+                                      <object class="GtkBox" id="info_chips">
+                                        <property name="orientation">horizontal</property>
+                                        <property name="spacing">16</property>
+                                        <property name="halign">start</property>
+                                      </object>
+                                    </child>
+                                    
+                                    <!-- Action buttons -->
+                                    <child>
+                                      <object class="GtkBox" id="action_buttons">
+                                        <property name="orientation">horizontal</property>
+                                        <property name="spacing">12</property>
+                                        <property name="margin-top">12</property>
+                                        
+                                        <!-- Play button -->
+                                        <child>
+                                          <object class="GtkButton" id="play_button">
+                                            <style>
+                                              <class name="suggested-action"/>
+                                              <class name="pill"/>
+                                            </style>
+                                            <child>
+                                              <object class="GtkBox">
+                                                <property name="spacing">8</property>
+                                                <child>
+                                                  <object class="GtkImage">
+                                                    <property name="icon-name">media-playback-start-symbolic</property>
+                                                  </object>
+                                                </child>
+                                                <child>
+                                                  <object class="GtkLabel">
+                                                    <property name="label" translatable="yes">Play</property>
+                                                  </object>
+                                                </child>
+                                              </object>
+                                            </child>
+                                          </object>
+                                        </child>
+                                        
+                                        <!-- Trailers -->
+                                        <child>
+                                          <object class="GtkBox" id="trailers_box">
+                                            <property name="orientation">horizontal</property>
+                                            <property name="spacing">8</property>
+                                            <property name="visible">false</property>
+                                          </object>
+                                        </child>
+                                      </object>
+                                    </child>
+                                  </object>
+                                </child>
+                              </object>
+                            </child>
+                          </object>
+                        </child>
+                        
+                        <!-- Main content below hero -->
+                        <child>
+                          <object class="GtkBox">
+                            <property name="orientation">vertical</property>
+                            <property name="spacing">24</property>
+                            <property name="margin-start">32</property>
+                            <property name="margin-end">32</property>
+                            <property name="margin-top">24</property>
+                            <property name="margin-bottom">32</property>
+                            
+                            <!-- Description -->
+                            <child>
+                              <object class="GtkLabel" id="description_label">
+                                <property name="label">Description</property>
+                                <property name="halign">start</property>
+                                <property name="wrap">true</property>
+                                <property name="wrap-mode">word-char</property>
+                                <property name="xalign">0</property>
+                                <property name="visible">false</property>
+                              </object>
+                            </child>
+                            
+                            <!-- Details section -->
+                            <child>
+                              <object class="GtkBox" id="details_grid">
+                                <property name="orientation">vertical</property>
+                                <property name="spacing">4</property>
+                                <property name="visible">false</property>
+                              </object>
+                            </child>
+                            
+                            <!-- Cast section -->
+                            <child>
+                              <object class="GtkBox">
+                                <property name="orientation">vertical</property>
+                                <property name="spacing">12</property>
+                                
+                                <child>
+                                  <object class="GtkLabel">
+                                    <property name="label" translatable="yes">Cast</property>
+                                    <property name="halign">start</property>
+                                    <style>
+                                      <class name="title-4"/>
+                                    </style>
+                                  </object>
+                                </child>
+                                
+                                <child>
+                                  <object class="GtkScrolledWindow">
+                                    <property name="hscrollbar-policy">automatic</property>
+                                    <property name="vscrollbar-policy">never</property>
+                                    <property name="height-request">100</property>
+                                    <child>
+                                      <object class="GtkBox" id="cast_box">
+                                        <property name="orientation">horizontal</property>
+                                        <property name="spacing">16</property>
+                                        <property name="visible">false</property>
+                                      </object>
+                                    </child>
+                                  </object>
+                                </child>
+                              </object>
+                            </child>
+                            
+                            <!-- Episodes Section (for series) -->
+                            <child>
+                              <object class="GtkBox" id="episodes_section">
+                                <property name="orientation">vertical</property>
+                                <property name="spacing">16</property>
+                                <property name="visible">false</property>
+                                
+                                <!-- Section header with season dropdown -->
+                                <child>
+                                  <object class="GtkBox">
+                                    <property name="orientation">horizontal</property>
+                                    <property name="spacing">16</property>
+                                    <property name="hexpand">true</property>
+                                    
+                                    <child>
+                                      <object class="GtkLabel">
+                                        <property name="label" translatable="yes">Episodes</property>
+                                        <property name="halign">start</property>
+                                        <property name="hexpand">true</property>
+                                        <style>
+                                          <class name="title-2"/>
+                                        </style>
+                                      </object>
+                                    </child>
+                                    
+                                    <!-- Season dropdown -->
+                                    <child>
+                                      <object class="GtkDropDown" id="season_dropdown">
+                                        <property name="halign">end</property>
+                                        <property name="valign">center</property>
+                                      </object>
+                                    </child>
+                                  </object>
+                                </child>
+                                
+                                <!-- Episodes grid -->
+                                <child>
+                                  <object class="GtkBox" id="episodes_box">
+                                    <property name="orientation">vertical</property>
+                                    <property name="spacing">8</property>
+                                  </object>
+                                </child>
+                              </object>
+                            </child>
+                            
+                            <!-- Legacy seasons_box for compatibility -->
+                            <child>
+                              <object class="GtkBox" id="seasons_box">
+                                <property name="orientation">horizontal</property>
+                                <property name="visible">false</property>
+                              </object>
+                            </child>
+                            
+                          </object>
+                        </child>
+                        
+                      </object>
+                    </child>
+                  </object>
+                </property>
+              </object>
+            </child>
+          </object>
+        </property>
+      </object>
+    </property>
+  </template>
+</interface>

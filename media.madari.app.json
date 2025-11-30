@@ -1,0 +1,101 @@
+{
+    "id" : "media.madari.app",
+    "runtime" : "org.gnome.Platform",
+    "runtime-version" : "46",
+    "sdk" : "org.gnome.Sdk",
+    "command" : "madari",
+    "finish-args" : [
+        "--share=ipc",
+        "--share=network",
+        "--socket=fallback-x11",
+        "--socket=wayland",
+        "--device=dri",
+        "--socket=pulseaudio",
+        "--device=all",
+        "--allow=devel",
+        "--filesystem=host:ro"
+    ],
+    "cleanup" : [
+        "/include",
+        "/lib/pkgconfig",
+        "/man",
+        "/share/doc",
+        "/share/gtk-doc",
+        "/share/man",
+        "/share/pkgconfig",
+        "*.la",
+        "*.a"
+    ],
+    "modules" : [
+        {
+            "name": "libass",
+            "config-opts": ["--disable-static"],
+            "sources": [
+                {
+                    "type": "archive",
+                    "url": "https://github.com/libass/libass/releases/download/0.17.1/libass-0.17.1.tar.xz",
+                    "sha256": "f0da0bbfba476c16ae3e1cfd862256d30915911f7abaa1b16ce62ee653192784"
+                }
+            ]
+        },
+        {
+            "name": "libplacebo",
+            "buildsystem": "meson",
+            "config-opts": [
+                "-Dvulkan=enabled",
+                "-Dopengl=disabled",
+                "-Dshaderc=disabled",
+                "-Dglslang=disabled",
+                "-Ddemos=false",
+                "-Dtests=false"
+            ],
+            "sources": [
+                {
+                    "type": "git",
+                    "url": "https://github.com/haasn/libplacebo.git",
+                    "tag": "v6.338.2",
+                    "commit": "64c1954570f1cd57f8570a57e51fb0249b57bb90"
+                }
+            ]
+        },
+        {
+            "name": "mpv",
+            "buildsystem": "meson",
+            "config-opts": [
+                "-Dlibmpv=true",
+                "-Dcplayer=true",
+                "-Dbuild-date=false",
+                "-Dalsa=disabled",
+                "-Dmanpage-build=disabled",
+                "-Dhtml-build=disabled",
+                "-Dsdl2=enabled",
+                "-Dsdl2-video=enabled",
+                "-Dsdl2-audio=enabled"
+            ],
+            "sources": [
+                {
+                    "type": "archive",
+                    "url": "https://github.com/mpv-player/mpv/archive/refs/tags/v0.38.0.tar.gz",
+                    "sha256": "86d9ef40b6058732f67b46d0bbda24a074fae860b3eaae05bab3145041303066"
+                }
+            ]
+        },
+        {
+            "name" : "madari",
+            "builddir" : true,
+            "buildsystem" : "meson",
+            "sources" : [
+                {
+                    "type" : "dir",
+                    "path" : "."
+                }
+            ],
+            "config-opts" : [
+                "--libdir=lib"
+            ]
+        }
+    ],
+    "build-options" : {
+        "env" : {        }
+    }
+}

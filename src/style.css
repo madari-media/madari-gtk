@@ -1,0 +1,115 @@
+/* Player Controls Styling */
+
+.player-controls-wrapper {
+    background: linear-gradient(to top,
+        rgba(0, 0, 0, 0.85) 0%,
+        rgba(0, 0, 0, 0.6) 50%,
+        rgba(0, 0, 0, 0) 100%
+    );
+}
+
+.player-btn {
+    min-width: 36px;
+    min-height: 36px;
+}
+
+.player-btn:hover {
+    background-color: rgba(255, 255, 255, 0.15);
+}
+
+.player-btn:active {
+    background-color: rgba(255, 255, 255, 0.25);
+}
+
+/* Override libadwaita's circular button style */
+.player-btn.flat {
+    border-radius: 6px;
+    background: transparent;
+}
+
+.player-btn.flat:hover {
+    background-color: rgba(255, 255, 255, 0.15);
+}
+
+.player-time {
+    color: white;
+    font-size: 13px;
+    font-weight: 500;
+    font-variant-numeric: tabular-nums;
+}
+
+/* Progress bar styling */
+.player-progress trough {
+    min-height: 5px;
+    border-radius: 3px;
+    background-color: rgba(255, 255, 255, 0.3);
+}
+
+.player-progress trough highlight {
+    background-color: @accent_color;
+    border-radius: 3px;
+}
+
+.player-progress slider {
+    min-width: 14px;
+    min-height: 14px;
+    margin: -5px;
+    border-radius: 50%;
+    background-color: white;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+}
+
+.player-progress:hover slider {
+    min-width: 16px;
+    min-height: 16px;
+}
+
+/* Volume slider */
+.player-volume trough {
+    min-height: 4px;
+    border-radius: 2px;
+    background-color: rgba(255, 255, 255, 0.3);
+}
+
+.player-volume trough highlight {
+    background-color: white;
+    border-radius: 2px;
+}
+
+.player-volume slider {
+    min-width: 12px;
+    min-height: 12px;
+    margin: -4px;
+    border-radius: 50%;
+    background-color: white;
+}
+
+/* Header bar styling for player */
+.player-view headerbar {
+    background: linear-gradient(to bottom,
+        rgba(0, 0, 0, 0.7) 0%,
+        rgba(0, 0, 0, 0) 100%
+    );
+    box-shadow: none;
+    border: none;
+}
+
+.player-view headerbar * {
+    color: white;
+}
+
+/* Video area background */
+.player-view {
+    background-color: black;
+}
+
+/* PiP window styling */
+.pip-window {
+    background-color: black;
+}
+
+.pip-controls {
+    background-color: rgba(0, 0, 0, 0.7);
+    border-radius: 8px;
+    padding: 8px;
+}

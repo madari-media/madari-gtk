@@ -1,0 +1,10 @@
+[Desktop Entry]
+Name=Madari
+Comment=A GTK4 Media Application with Stremio integration
+Exec=madari
+Icon=media.madari.app
+Terminal=false
+Type=Application
+Categories=AudioVideo;Video;Player;GTK;
+Keywords=video;player;stremio;media;
+StartupNotify=true
