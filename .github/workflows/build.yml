@@ -415,6 +415,46 @@ jobs:
           wget -q https://github.com/linuxdeploy/linuxdeploy-plugin-appimage/releases/download/continuous/linuxdeploy-plugin-appimage-x86_64.AppImage
           chmod +x linuxdeploy-x86_64.AppImage linuxdeploy-plugin-appimage-x86_64.AppImage
       
+      - name: Bundle GIO modules for TLS support
+        run: |
+          # Copy GIO modules (needed for TLS/SSL support in libsoup)
+          mkdir -p AppDir/usr/lib/x86_64-linux-gnu/gio/modules
+          cp -a /usr/lib/x86_64-linux-gnu/gio/modules/* AppDir/usr/lib/x86_64-linux-gnu/gio/modules/ || true
+          
+          # Copy GnuTLS and related libraries for TLS support
+          for lib in libgnutls.so* libhogweed.so* libnettle.so* libp11-kit.so* libtasn1.so* libgmp.so* libidn2.so* libunistring.so* libffi.so*; do
+            cp -a /usr/lib/x86_64-linux-gnu/$lib AppDir/usr/lib/x86_64-linux-gnu/ 2>/dev/null || true
+          done
+          
+          # Copy CA certificates
+          mkdir -p AppDir/etc/ssl/certs
+          cp -a /etc/ssl/certs/ca-certificates.crt AppDir/etc/ssl/certs/ || true
+      
+      - name: Create custom AppRun
+        run: |
+          cat > AppDir/AppRun << 'APPRUN'
+          #!/bin/bash
+          SELF=$(readlink -f "$0")
+          HERE=${SELF%/*}
+          
+          # Set library paths
+          export LD_LIBRARY_PATH="${HERE}/usr/lib:${HERE}/usr/lib/x86_64-linux-gnu:${LD_LIBRARY_PATH}"
+          
+          # Set GIO module path for TLS support
+          export GIO_MODULE_DIR="${HERE}/usr/lib/x86_64-linux-gnu/gio/modules"
+          
+          # Set SSL certificate path
+          export SSL_CERT_FILE="${HERE}/etc/ssl/certs/ca-certificates.crt"
+          export SSL_CERT_DIR="${HERE}/etc/ssl/certs"
+          
+          # Set XDG paths
+          export XDG_DATA_DIRS="${HERE}/usr/share:${XDG_DATA_DIRS:-/usr/share}"
+          
+          # Run the application
+          exec "${HERE}/usr/bin/${{ env.APP_NAME }}" "$@"
+          APPRUN
+          chmod +x AppDir/AppRun
+      
       - name: Bundle AppImage
         run: |
           # Set output filename and skip AppStream validation (URLs may not exist yet)
@@ -427,6 +467,7 @@ jobs:
             --executable AppDir/usr/bin/${{ env.APP_NAME }} \
             --desktop-file AppDir/usr/share/applications/${{ env.APP_ID }}.desktop \
             --icon-file AppDir/usr/share/icons/hicolor/512x512/apps/${{ env.APP_ID }}.png \
+            --custom-apprun AppDir/AppRun \
             --output appimage
           
           # Verify AppImage was created

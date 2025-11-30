@@ -1,8 +1,11 @@
 #include "trakt_service.hpp"
+#include "trakt_types.hpp"
+
 #include <json-glib/json-glib.h>
 #include <libsoup/soup.h>
 #include <glib.h>
 #include <ctime>
+#include <vector>
 
 namespace Trakt {
 
@@ -1387,21 +1390,159 @@ void TraktService::add_to_history(const std::string& type, const std::string& im
     });
 }
 
+// ============ ID Parsing ============
+
+ContentIds parse_stremio_id(const std::string& id) {
+    ContentIds result;
+    
+    if (id.empty()) {
+        return result;
+    }
+    
+    // Split by ':' to handle various formats
+    std::vector<std::string> parts;
+    std::string current;
+    for (char c : id) {
+        if (c == ':') {
+            if (!current.empty()) {
+                parts.push_back(current);
+                current.clear();
+            }
+        } else {
+            current += c;
+        }
+    }
+    if (!current.empty()) {
+        parts.push_back(current);
+    }
+    
+    if (parts.empty()) {
+        return result;
+    }
+    
+    // Determine ID type based on first part
+    const std::string& first = parts[0];
+    
+    if (first.substr(0, 2) == "tt") {
+        // IMDB ID (e.g., "tt1234567" or "tt1234567:2:5")
+        result.imdb = first;
+        
+        // Check for episode format: tt1234567:season:episode
+        if (parts.size() >= 3) {
+            try {
+                result.season = std::stoi(parts[1]);
+                result.episode = std::stoi(parts[2]);
+                result.is_episode = true;
+            } catch (...) {
+                // Not valid episode numbers, ignore
+            }
+        }
+    } else if (first == "tmdb" && parts.size() >= 2) {
+        // TMDB ID (e.g., "tmdb:12345" or "tmdb:12345:2:5")
+        try {
+            result.tmdb = std::stoll(parts[1]);
+            
+            // Check for episode format: tmdb:id:season:episode
+            if (parts.size() >= 4) {
+                result.season = std::stoi(parts[2]);
+                result.episode = std::stoi(parts[3]);
+                result.is_episode = true;
+            }
+        } catch (...) {
+            // Invalid number
+        }
+    } else if (first == "tvdb" && parts.size() >= 2) {
+        // TVDB ID (e.g., "tvdb:67890" or "tvdb:67890:2:5")
+        try {
+            result.tvdb = std::stoll(parts[1]);
+            
+            // Check for episode format: tvdb:id:season:episode
+            if (parts.size() >= 4) {
+                result.season = std::stoi(parts[2]);
+                result.episode = std::stoi(parts[3]);
+                result.is_episode = true;
+            }
+        } catch (...) {
+            // Invalid number
+        }
+    } else if (first == "kitsu" && parts.size() >= 2) {
+        // Kitsu ID (e.g., "kitsu:12345" or "kitsu:12345:2:5")
+        try {
+            result.kitsu = std::stoll(parts[1]);
+            
+            // Check for episode format: kitsu:id:season:episode
+            if (parts.size() >= 4) {
+                result.season = std::stoi(parts[2]);
+                result.episode = std::stoi(parts[3]);
+                result.is_episode = true;
+            }
+        } catch (...) {
+            // Invalid number
+        }
+    }
+    
+    return result;
+}
+
 // ============ Scrobble Methods ============
 
-static std::string build_scrobble_body(const std::string& type, const std::string& imdb_id, double progress) {
+// Helper to add IDs object to JSON builder
+static void add_ids_to_builder(JsonBuilder* builder, const ContentIds& ids) {
+    json_builder_set_member_name(builder, "ids");
+    json_builder_begin_object(builder);
+    
+    if (ids.imdb.has_value()) {
+        json_builder_set_member_name(builder, "imdb");
+        json_builder_add_string_value(builder, ids.imdb->c_str());
+    }
+    if (ids.tmdb.has_value()) {
+        json_builder_set_member_name(builder, "tmdb");
+        json_builder_add_int_value(builder, *ids.tmdb);
+    }
+    if (ids.tvdb.has_value()) {
+        json_builder_set_member_name(builder, "tvdb");
+        json_builder_add_int_value(builder, *ids.tvdb);
+    }
+    
+    json_builder_end_object(builder);
+}
+
+// Build scrobble body with support for multiple ID types and episodes
+static std::string build_scrobble_body(const std::string& content_type, const ContentIds& ids, double progress) {
     g_autoptr(JsonBuilder) builder = json_builder_new();
     json_builder_begin_object(builder);
     
-    json_builder_set_member_name(builder, type.c_str());
-    json_builder_begin_object(builder);
-    json_builder_set_member_name(builder, "ids");
-    json_builder_begin_object(builder);
-    json_builder_set_member_name(builder, "imdb");
-    json_builder_add_string_value(builder, imdb_id.c_str());
-    json_builder_end_object(builder);
-    json_builder_end_object(builder);
+    // Determine if this is an episode based on content_type and episode info
+    bool is_episode = (content_type == "series" || content_type == "episode") && ids.is_episode;
     
+    if (is_episode) {
+        // Episode scrobble format:
+        // { "show": { "ids": {...} }, "episode": { "season": N, "number": N }, "progress": P }
+        
+        // Show object with IDs
+        json_builder_set_member_name(builder, "show");
+        json_builder_begin_object(builder);
+        add_ids_to_builder(builder, ids);
+        json_builder_end_object(builder);
+        
+        // Episode object with season/number
+        json_builder_set_member_name(builder, "episode");
+        json_builder_begin_object(builder);
+        json_builder_set_member_name(builder, "season");
+        json_builder_add_int_value(builder, ids.season);
+        json_builder_set_member_name(builder, "number");
+        json_builder_add_int_value(builder, ids.episode);
+        json_builder_end_object(builder);
+    } else {
+        // Movie scrobble format:
+        // { "movie": { "ids": {...} }, "progress": P }
+        json_builder_set_member_name(builder, "movie");
+        json_builder_begin_object(builder);
+        add_ids_to_builder(builder, ids);
+        json_builder_end_object(builder);
+    }
+    
+    // Progress
     json_builder_set_member_name(builder, "progress");
     json_builder_add_double_value(builder, progress);
     
@@ -1416,63 +1557,91 @@ static std::string build_scrobble_body(const std::string& type, const std::strin
     return result;
 }
 
-void TraktService::scrobble_start(const std::string& type, const std::string& imdb_id,
+void TraktService::scrobble_start(const std::string& content_type, const ContentIds& ids,
                                    double progress, AuthCallback callback) {
-    ensure_valid_token([this, type, imdb_id, progress, callback](bool valid) {
+    if (!ids.has_id()) {
+        callback(false, "No valid ID found for scrobbling");
+        return;
+    }
+    
+    ensure_valid_token([this, content_type, ids, progress, callback](bool valid) {
         if (!valid) {
             callback(false, "Not authenticated");
             return;
         }
         
-        std::string body = build_scrobble_body(type, imdb_id, progress);
+        std::string body = build_scrobble_body(content_type, ids, progress);
+        g_print("[Trakt] Scrobble start: %s\n", body.c_str());
         
         make_request("POST", "/scrobble/start", body, true,
-            [callback](const std::string&, int status, const std::string& error) {
+            [callback](const std::string& response, int status, const std::string& error) {
                 if (!error.empty() && status != 201) {
+                    g_warning("[Trakt] Scrobble start failed: %s (status: %d)", error.c_str(), status);
                     callback(false, error);
                 } else {
+                    g_print("[Trakt] Scrobble start success\n");
                     callback(true, "");
                 }
             });
     });
 }
 
-void TraktService::scrobble_pause(const std::string& type, const std::string& imdb_id,
+void TraktService::scrobble_pause(const std::string& content_type, const ContentIds& ids,
                                    double progress, AuthCallback callback) {
-    ensure_valid_token([this, type, imdb_id, progress, callback](bool valid) {
+    if (!ids.has_id()) {
+        callback(false, "No valid ID found for scrobbling");
+        return;
+    }
+    
+    ensure_valid_token([this, content_type, ids, progress, callback](bool valid) {
         if (!valid) {
             callback(false, "Not authenticated");
             return;
         }
         
-        std::string body = build_scrobble_body(type, imdb_id, progress);
+        std::string body = build_scrobble_body(content_type, ids, progress);
+        g_print("[Trakt] Scrobble pause: %s\n", body.c_str());
         
         make_request("POST", "/scrobble/pause", body, true,
-            [callback](const std::string&, int status, const std::string& error) {
+            [callback](const std::string& response, int status, const std::string& error) {
                 if (!error.empty() && status != 201) {
+                    g_warning("[Trakt] Scrobble pause failed: %s (status: %d)", error.c_str(), status);
                     callback(false, error);
                 } else {
+                    g_print("[Trakt] Scrobble pause success\n");
                     callback(true, "");
                 }
             });
     });
 }
 
-void TraktService::scrobble_stop(const std::string& type, const std::string& imdb_id,
+void TraktService::scrobble_stop(const std::string& content_type, const ContentIds& ids,
                                   double progress, AuthCallback callback) {
-    ensure_valid_token([this, type, imdb_id, progress, callback](bool valid) {
+    if (!ids.has_id()) {
+        callback(false, "No valid ID found for scrobbling");
+        return;
+    }
+    
+    ensure_valid_token([this, content_type, ids, progress, callback](bool valid) {
         if (!valid) {
             callback(false, "Not authenticated");
             return;
         }
         
-        std::string body = build_scrobble_body(type, imdb_id, progress);
+        std::string body = build_scrobble_body(content_type, ids, progress);
+        g_print("[Trakt] Scrobble stop (progress: %.1f%%): %s\n", progress, body.c_str());
         
         make_request("POST", "/scrobble/stop", body, true,
-            [callback](const std::string&, int status, const std::string& error) {
+            [callback, progress](const std::string& response, int status, const std::string& error) {
                 if (!error.empty() && status != 201) {
+                    g_warning("[Trakt] Scrobble stop failed: %s (status: %d)", error.c_str(), status);
                     callback(false, error);
                 } else {
+                    if (progress >= 80.0) {
+                        g_print("[Trakt] Scrobble stop success - marked as watched\n");
+                    } else {
+                        g_print("[Trakt] Scrobble stop success - saved progress\n");
+                    }
                     callback(true, "");
                 }
             });

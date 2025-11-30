@@ -132,6 +132,10 @@ struct _MadariWindow {
     int current_episode_number;          // Current episode number for watch history
     guint history_save_timeout_id;       // Timer for periodic history saves
     gboolean history_needs_save;         // Flag to indicate pending save
+    
+    // Trakt scrobbling state
+    gboolean scrobble_started;           // Has scrobble_start been sent for current playback?
+    int64_t last_scrobble_time;          // Unix timestamp of last scrobble call (for debouncing)
 };
 
 G_DEFINE_TYPE(MadariWindow, madari_window, ADW_TYPE_APPLICATION_WINDOW)
@@ -145,6 +149,72 @@ static void load_catalog_content(MadariWindow *self, GtkBox *items_box,
                                   const std::string& addon_id, const std::string& type,
                                   const std::string& catalog_id);
 static GtkWidget* create_poster_item(const Stremio::MetaPreview& meta);
+
+// ============ Trakt Scrobbling ============
+
+/**
+ * Trigger a scrobble action (start, pause, stop)
+ * This function is debounced to avoid excessive API calls
+ * 
+ * @param self Window instance
+ * @param action "start", "pause", or "stop"
+ */
+static void trigger_scrobble(MadariWindow *self, const char* action) {
+    // Check if we have valid video context
+    if (!self->current_video_id || !self->current_meta_type) {
+        return;
+    }
+    
+    // Check if Trakt is enabled and configured
+    Trakt::TraktService *trakt = madari_application_get_trakt_service(self->app);
+    if (!trakt || !trakt->is_authenticated() || !trakt->get_config().sync_progress) {
+        return;
+    }
+    
+    // Debounce: Don't scrobble more than once per 5 seconds for start/pause
+    // For stop, always allow to ensure progress is saved
+    int64_t now = g_get_real_time() / 1000000;  // Convert microseconds to seconds
+    if (strcmp(action, "stop") != 0 && now - self->last_scrobble_time < 5) {
+        return;
+    }
+    self->last_scrobble_time = now;
+    
+    // Parse the video ID to get content IDs
+    Trakt::ContentIds ids = Trakt::parse_stremio_id(*self->current_video_id);
+    if (!ids.has_id()) {
+        g_warning("[Trakt] Cannot scrobble: No valid ID found in video_id: %s", 
+                  self->current_video_id->c_str());
+        return;
+    }
+    
+    // Calculate progress percentage (0-100)
+    double progress = 0.0;
+    if (self->player_duration > 0) {
+        progress = (self->player_position / self->player_duration) * 100.0;
+        progress = std::min(100.0, std::max(0.0, progress));
+    }
+    
+    // Get content type - use meta_type to determine movie vs series
+    std::string content_type = *self->current_meta_type;
+    
+    // Call appropriate scrobble method
+    if (strcmp(action, "start") == 0) {
+        trakt->scrobble_start(content_type, ids, progress, 
+            [](bool success, const std::string& error) {
+                // Silent callback - errors are logged in the service
+            });
+    } else if (strcmp(action, "pause") == 0) {
+        trakt->scrobble_pause(content_type, ids, progress,
+            [](bool success, const std::string& error) {
+                // Silent callback
+            });
+    } else if (strcmp(action, "stop") == 0) {
+        trakt->scrobble_stop(content_type, ids, progress,
+            [](bool success, const std::string& error) {
+                // Silent callback
+            });
+    }
+}
 
 static void clear_catalogs_box(MadariWindow *self) {
     GtkWidget *child;
@@ -1133,6 +1203,10 @@ static void madari_window_init(MadariWindow *self) {
     self->current_episode_number = 0;
     self->history_save_timeout_id = 0;
     self->history_needs_save = FALSE;
+    
+    // Trakt scrobbling initialization
+    self->scrobble_started = FALSE;
+    self->last_scrobble_time = 0;
 }
 
 MadariWindow *madari_window_new(MadariApplication *app) {
@@ -1226,13 +1300,19 @@ static void uninhibit_system_sleep(MadariWindow *self) {
 
 static void on_player_render_update(void *ctx) {
     MadariWindow *self = MADARI_WINDOW(ctx);
-    g_idle_add([](gpointer data) -> gboolean {
-        MadariWindow *self = MADARI_WINDOW(data);
-        if (self->video_area) {
-            gtk_gl_area_queue_render(self->video_area);
-        }
-        return G_SOURCE_REMOVE;
-    }, self);
+    // Add a ref to prevent the window from being destroyed while the callback is pending
+    if (MADARI_IS_WINDOW(self)) {
+        g_object_ref(self);
+        g_idle_add([](gpointer data) -> gboolean {
+            MadariWindow *self = MADARI_WINDOW(data);
+            // Verify the window is still valid
+            if (MADARI_IS_WINDOW(self) && self->video_area && GTK_IS_GL_AREA(self->video_area)) {
+                gtk_gl_area_queue_render(self->video_area);
+            }
+            g_object_unref(self);
+            return G_SOURCE_REMOVE;
+        }, self);
+    }
 }
 
 // ============= Watch History Functions =============
@@ -1327,17 +1407,32 @@ static void on_player_mpv_events(MadariWindow *self) {
                     self->player_duration = *static_cast<double*>(prop->data);
                     update_player_ui(self);
                 } else if (strcmp(prop->name, "pause") == 0 && prop->format == MPV_FORMAT_FLAG) {
+                    gboolean was_playing = self->player_is_playing;
                     self->player_is_playing = !*static_cast<int*>(prop->data);
                     gtk_button_set_icon_name(self->player_play_btn,
                         self->player_is_playing ? "media-playback-pause-symbolic" : "media-playback-start-symbolic");
                     // Inhibit/uninhibit system sleep based on playback state
                     if (self->player_is_playing) {
                         inhibit_system_sleep(self);
+                        // Trakt: Resume playback - send start scrobble
+                        if (!was_playing && self->scrobble_started) {
+                            trigger_scrobble(self, "start");
+                        }
                     } else {
                         uninhibit_system_sleep(self);
+                        // Trakt: Pause playback - send pause scrobble
+                        if (was_playing && self->scrobble_started) {
+                            trigger_scrobble(self, "pause");
+                        }
                     }
                 } else if (strcmp(prop->name, "eof-reached") == 0 && prop->format == MPV_FORMAT_FLAG) {
                     if (*static_cast<int*>(prop->data)) {
+                        // Trakt: Video ended - send stop scrobble with 100% progress
+                        if (self->scrobble_started) {
+                            self->player_position = self->player_duration;  // Ensure 100%
+                            trigger_scrobble(self, "stop");
+                            self->scrobble_started = FALSE;
+                        }
                         madari_window_stop_video(self);
                     }
                 } else if (strcmp(prop->name, "track-list") == 0) {
@@ -1351,6 +1446,12 @@ static void on_player_mpv_events(MadariWindow *self) {
             case MPV_EVENT_FILE_LOADED:
                 gtk_widget_set_visible(self->player_loading, FALSE);
                 update_track_menus(self);
+                
+                // Trakt: Start scrobbling when file is loaded
+                if (!self->scrobble_started) {
+                    self->scrobble_started = TRUE;
+                    trigger_scrobble(self, "start");
+                }
                 break;
             case MPV_EVENT_START_FILE:
                 gtk_widget_set_visible(self->player_loading, TRUE);
@@ -1371,12 +1472,25 @@ static void on_player_mpv_events(MadariWindow *self) {
 
 static gboolean on_player_mpv_event(gpointer user_data) {
     MadariWindow *self = MADARI_WINDOW(user_data);
+    
+    // Verify the window is still valid before processing events
+    if (!MADARI_IS_WINDOW(self)) {
+        g_object_unref(self);
+        return G_SOURCE_REMOVE;
+    }
+    
     on_player_mpv_events(self);
+    g_object_unref(self);
     return G_SOURCE_REMOVE;
 }
 
 static void player_mpv_wakeup(void *ctx) {
-    g_idle_add(on_player_mpv_event, ctx);
+    MadariWindow *self = MADARI_WINDOW(ctx);
+    // Add a ref to prevent the window from being destroyed while the callback is pending
+    if (MADARI_IS_WINDOW(self)) {
+        g_object_ref(self);
+        g_idle_add(on_player_mpv_event, self);
+    }
 }
 
 static void on_video_realize([[maybe_unused]] GtkWidget *widget, gpointer user_data) {
@@ -1528,25 +1642,37 @@ static std::string format_player_time(double seconds) {
 }
 
 static void update_player_ui(MadariWindow *self) {
+    // Verify window and widgets are valid before updating UI
+    if (!MADARI_IS_WINDOW(self)) return;
+    
     if (self->player_duration > 0 && !self->player_seeking) {
-        gtk_range_set_range(GTK_RANGE(self->player_progress), 0, self->player_duration);
-        gtk_range_set_value(GTK_RANGE(self->player_progress), self->player_position);
+        if (self->player_progress && GTK_IS_RANGE(self->player_progress)) {
+            gtk_range_set_range(GTK_RANGE(self->player_progress), 0, self->player_duration);
+            gtk_range_set_value(GTK_RANGE(self->player_progress), self->player_position);
+        }
     }
     
-    gtk_label_set_text(self->player_time_label, format_player_time(self->player_position).c_str());
+    if (self->player_time_label && GTK_IS_LABEL(self->player_time_label)) {
+        gtk_label_set_text(self->player_time_label, format_player_time(self->player_position).c_str());
+    }
     
     // Show remaining time or total duration based on user preference
-    if (self->player_show_remaining && self->player_duration > 0) {
-        double remaining = self->player_duration - self->player_position;
-        std::string remaining_str = "-" + format_player_time(remaining);
-        gtk_label_set_text(self->player_duration_label, remaining_str.c_str());
-    } else {
-        gtk_label_set_text(self->player_duration_label, format_player_time(self->player_duration).c_str());
+    if (self->player_duration_label && GTK_IS_LABEL(self->player_duration_label)) {
+        if (self->player_show_remaining && self->player_duration > 0) {
+            double remaining = self->player_duration - self->player_position;
+            std::string remaining_str = "-" + format_player_time(remaining);
+            gtk_label_set_text(self->player_duration_label, remaining_str.c_str());
+        } else {
+            gtk_label_set_text(self->player_duration_label, format_player_time(self->player_duration).c_str());
+        }
     }
 }
 
 static void update_track_menus(MadariWindow *self) {
+    // Verify window and MPV are valid before updating track menus
+    if (!MADARI_IS_WINDOW(self)) return;
     if (!self->mpv) return;
+    if (!self->audio_tracks || !self->subtitle_tracks) return;
     
     self->audio_tracks->clear();
     self->subtitle_tracks->clear();
@@ -1613,7 +1739,9 @@ static void update_track_menus(MadariWindow *self) {
         snprintf(action, sizeof(action), "win.audio-track(%d)", track.first);
         g_menu_append(audio_menu, track.second.c_str(), action);
     }
-    gtk_menu_button_set_menu_model(self->audio_track_btn, G_MENU_MODEL(audio_menu));
+    if (self->audio_track_btn && GTK_IS_MENU_BUTTON(self->audio_track_btn)) {
+        gtk_menu_button_set_menu_model(self->audio_track_btn, G_MENU_MODEL(audio_menu));
+    }
     g_object_unref(audio_menu);
     
     // Build subtitle menu
@@ -1624,18 +1752,26 @@ static void update_track_menus(MadariWindow *self) {
         snprintf(action, sizeof(action), "win.subtitle-track(%d)", track.first);
         g_menu_append(sub_menu, track.second.c_str(), action);
     }
-    gtk_menu_button_set_menu_model(self->subtitle_track_btn, G_MENU_MODEL(sub_menu));
+    if (self->subtitle_track_btn && GTK_IS_MENU_BUTTON(self->subtitle_track_btn)) {
+        gtk_menu_button_set_menu_model(self->subtitle_track_btn, G_MENU_MODEL(sub_menu));
+    }
     g_object_unref(sub_menu);
 }
 
 static gboolean hide_player_controls(gpointer user_data) {
     MadariWindow *self = MADARI_WINDOW(user_data);
+    
+    // Verify window is still valid
+    if (!MADARI_IS_WINDOW(self)) {
+        return G_SOURCE_REMOVE;
+    }
+    
     self->player_hide_controls_id = 0;
     
     // Don't hide if settings popover is open
-    if (self->player_settings_btn) {
+    if (self->player_settings_btn && GTK_IS_MENU_BUTTON(self->player_settings_btn)) {
         GtkPopover *popover = gtk_menu_button_get_popover(self->player_settings_btn);
-        if (popover && gtk_widget_get_visible(GTK_WIDGET(popover))) {
+        if (popover && GTK_IS_POPOVER(popover) && gtk_widget_get_visible(GTK_WIDGET(popover))) {
             // Reschedule hide for later
             self->player_hide_controls_id = g_timeout_add(3000, hide_player_controls, self);
             return G_SOURCE_REMOVE;
@@ -1643,36 +1779,52 @@ static gboolean hide_player_controls(gpointer user_data) {
     }
     
     // Don't hide if audio/subtitle track menus are open
-    if (self->audio_track_btn) {
+    if (self->audio_track_btn && GTK_IS_MENU_BUTTON(self->audio_track_btn)) {
         GtkPopover *popover = gtk_menu_button_get_popover(self->audio_track_btn);
-        if (popover && gtk_widget_get_visible(GTK_WIDGET(popover))) {
+        if (popover && GTK_IS_POPOVER(popover) && gtk_widget_get_visible(GTK_WIDGET(popover))) {
             self->player_hide_controls_id = g_timeout_add(3000, hide_player_controls, self);
             return G_SOURCE_REMOVE;
         }
     }
-    if (self->subtitle_track_btn) {
+    if (self->subtitle_track_btn && GTK_IS_MENU_BUTTON(self->subtitle_track_btn)) {
         GtkPopover *popover = gtk_menu_button_get_popover(self->subtitle_track_btn);
-        if (popover && gtk_widget_get_visible(GTK_WIDGET(popover))) {
+        if (popover && GTK_IS_POPOVER(popover) && gtk_widget_get_visible(GTK_WIDGET(popover))) {
             self->player_hide_controls_id = g_timeout_add(3000, hide_player_controls, self);
             return G_SOURCE_REMOVE;
         }
     }
     
     if (self->player_is_playing) {
-        gtk_revealer_set_reveal_child(self->player_controls_revealer, FALSE);
-        gtk_revealer_set_reveal_child(self->player_header_revealer, FALSE);
-        gtk_widget_set_cursor_from_name(GTK_WIDGET(self->video_area), "none");
+        if (self->player_controls_revealer && GTK_IS_REVEALER(self->player_controls_revealer)) {
+            gtk_revealer_set_reveal_child(self->player_controls_revealer, FALSE);
+        }
+        if (self->player_header_revealer && GTK_IS_REVEALER(self->player_header_revealer)) {
+            gtk_revealer_set_reveal_child(self->player_header_revealer, FALSE);
+        }
+        if (self->video_area && GTK_IS_GL_AREA(self->video_area)) {
+            gtk_widget_set_cursor_from_name(GTK_WIDGET(self->video_area), "none");
+        }
     }
     return G_SOURCE_REMOVE;
 }
 
 static void show_player_controls(MadariWindow *self) {
-    gtk_revealer_set_reveal_child(self->player_controls_revealer, TRUE);
-    gtk_revealer_set_reveal_child(self->player_header_revealer, TRUE);
-    gtk_widget_set_cursor_from_name(GTK_WIDGET(self->video_area), "default");
+    if (!MADARI_IS_WINDOW(self)) return;
+    
+    if (self->player_controls_revealer && GTK_IS_REVEALER(self->player_controls_revealer)) {
+        gtk_revealer_set_reveal_child(self->player_controls_revealer, TRUE);
+    }
+    if (self->player_header_revealer && GTK_IS_REVEALER(self->player_header_revealer)) {
+        gtk_revealer_set_reveal_child(self->player_header_revealer, TRUE);
+    }
+    if (self->video_area && GTK_IS_GL_AREA(self->video_area)) {
+        gtk_widget_set_cursor_from_name(GTK_WIDGET(self->video_area), "default");
+    }
 }
 
 static void schedule_hide_player_controls(MadariWindow *self) {
+    if (!MADARI_IS_WINDOW(self)) return;
+    
     // Cancel existing timer
     if (self->player_hide_controls_id > 0) {
         g_source_remove(self->player_hide_controls_id);
@@ -2038,6 +2190,12 @@ static void show_episode_streams_dialog(MadariWindow *self, const std::string& v
 static void play_episode_by_index(MadariWindow *self, int index) {
     if (!self->episode_list || index < 0 || index >= (int)self->episode_list->size()) {
         return;
+    }
+    
+    // Trakt: Stop scrobble for current episode before switching
+    if (self->scrobble_started) {
+        trigger_scrobble(self, "stop");
+        self->scrobble_started = FALSE;
     }
     
     // Get the episode info
@@ -3462,6 +3620,12 @@ void madari_window_set_episode_list(MadariWindow *self,
 }
 
 void madari_window_stop_video(MadariWindow *self) {
+    // Trakt: Stop scrobbling before clearing context
+    if (self->scrobble_started) {
+        trigger_scrobble(self, "stop");
+        self->scrobble_started = FALSE;
+    }
+    
     // Stop watch history save timer and do final save
     stop_history_save_timer(self);
     

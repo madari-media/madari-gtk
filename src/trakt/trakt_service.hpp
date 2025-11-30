@@ -180,20 +180,27 @@ public:
     
     /**
      * Start scrobble (when playback starts)
+     * Supports multiple ID types and episode scrobbling
+     * 
+     * @param content_type "movie" or "series" (Stremio type)
+     * @param ids Parsed content IDs with optional episode info
+     * @param progress Progress percentage (0-100)
+     * @param callback Result callback
      */
-    void scrobble_start(const std::string& type, const std::string& imdb_id,
+    void scrobble_start(const std::string& content_type, const ContentIds& ids,
                         double progress, AuthCallback callback);
     
     /**
      * Pause scrobble
      */
-    void scrobble_pause(const std::string& type, const std::string& imdb_id,
+    void scrobble_pause(const std::string& content_type, const ContentIds& ids,
                         double progress, AuthCallback callback);
     
     /**
-     * Stop scrobble (when playback ends)
+     * Stop scrobble (when playback ends or is stopped)
+     * If progress > 80%, marks as watched
      */
-    void scrobble_stop(const std::string& type, const std::string& imdb_id,
+    void scrobble_stop(const std::string& content_type, const ContentIds& ids,
                        double progress, AuthCallback callback);
 
 private:

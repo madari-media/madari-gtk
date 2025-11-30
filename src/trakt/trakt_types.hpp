@@ -20,6 +20,44 @@ struct Ids {
 };
 
 /**
+ * Parsed content IDs from Stremio format
+ * Used for scrobbling - supports multiple ID types and episode info
+ * 
+ * Stremio ID formats:
+ * - IMDB: "tt1234567" or "tt1234567:2:5" (with season:episode)
+ * - TMDB: "tmdb:12345" or "tmdb:12345:2:5"
+ * - TVDB: "tvdb:67890" or "tvdb:67890:2:5"
+ * - Kitsu: "kitsu:12345" or "kitsu:12345:2:5"
+ */
+struct ContentIds {
+    std::optional<std::string> imdb;
+    std::optional<int64_t> tmdb;
+    std::optional<int64_t> tvdb;
+    std::optional<int64_t> kitsu;
+    
+    // Episode info (parsed from "id:season:episode" format)
+    bool is_episode = false;
+    int season = 0;
+    int episode = 0;
+    
+    // Check if any ID is available
+    bool has_id() const {
+        return imdb.has_value() || tmdb.has_value() || 
+               tvdb.has_value() || kitsu.has_value();
+    }
+};
+
+/**
+ * Parse a Stremio-format ID string into ContentIds
+ * Examples:
+ *   "tt1234567" -> imdb="tt1234567"
+ *   "tt1234567:2:5" -> imdb="tt1234567", is_episode=true, season=2, episode=5
+ *   "tmdb:12345" -> tmdb=12345
+ *   "tmdb:12345:2:5" -> tmdb=12345, is_episode=true, season=2, episode=5
+ */
+ContentIds parse_stremio_id(const std::string& id);
+
+/**
  * Movie object from Trakt API
  */
 struct Movie {
