@@ -116,6 +116,9 @@ jobs:
           %files
           %license COPYING
           %{_bindir}/${{ env.APP_NAME }}
+          %{_datadir}/applications/${{ env.APP_ID }}.desktop
+          %{_datadir}/icons/hicolor/512x512/apps/${{ env.APP_ID }}.png
+          %{_datadir}/metainfo/${{ env.APP_ID }}.metainfo.xml
           EOF
       
       - name: Create source tarball
@@ -414,8 +417,9 @@ jobs:
       
       - name: Bundle AppImage
         run: |
-          # Set output filename
+          # Set output filename and skip AppStream validation (URLs may not exist yet)
           export OUTPUT="${{ env.APP_NAME }}-${{ needs.setup.outputs.version }}-x86_64.AppImage"
+          export NO_APPSTREAM=1
           
           # Use linuxdeploy to bundle dependencies and create AppImage
           ./linuxdeploy-x86_64.AppImage \
