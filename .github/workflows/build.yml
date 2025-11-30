@@ -432,7 +432,7 @@ jobs:
       
       - name: Create custom AppRun
         run: |
-          cat > AppDir/AppRun << 'APPRUN'
+          cat > custom-AppRun << 'APPRUN'
           #!/bin/bash
           SELF=$(readlink -f "$0")
           HERE=${SELF%/*}
@@ -451,9 +451,9 @@ jobs:
           export XDG_DATA_DIRS="${HERE}/usr/share:${XDG_DATA_DIRS:-/usr/share}"
           
           # Run the application
-          exec "${HERE}/usr/bin/${{ env.APP_NAME }}" "$@"
+          exec "${HERE}/usr/bin/madari" "$@"
           APPRUN
-          chmod +x AppDir/AppRun
+          chmod +x custom-AppRun
       
       - name: Bundle AppImage
         run: |
@@ -467,7 +467,7 @@ jobs:
             --executable AppDir/usr/bin/${{ env.APP_NAME }} \
             --desktop-file AppDir/usr/share/applications/${{ env.APP_ID }}.desktop \
             --icon-file AppDir/usr/share/icons/hicolor/512x512/apps/${{ env.APP_ID }}.png \
-            --custom-apprun AppDir/AppRun \
+            --custom-apprun custom-AppRun \
             --output appimage
           
           # Verify AppImage was created
